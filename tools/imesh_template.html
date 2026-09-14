@@ -1,0 +1,1249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>iMesh Studio — quadtree refinement plate renderer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#080C11; --panel:#0F151C; --panel-2:#131B24; --rule:#1D2732;
+  --text:#C8D4E0; --dim:#78879A; --faint:#4A5765;
+  --signal:#4FB8C9; --signal-dim:#2C6F7B; --warn:#E0A24B;
+  --r1:#1E54DC; --r2:#28963F; --r4:#F0E68C; --r8:#F08C32; --r16:#B0182B; --r32:#6E0F1B;
+  --rail:312px;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  background:var(--ink); color:var(--text);
+  font-family:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-size:13px; overflow:hidden; -webkit-font-smoothing:antialiased;
+}
+#app{display:grid;grid-template-columns:var(--rail) 1fr;height:100vh}
+
+/* ---------- rail ---------- */
+#rail{background:var(--panel);border-right:1px solid var(--rule);overflow-y:auto;overflow-x:hidden}
+#rail::-webkit-scrollbar{width:9px}
+#rail::-webkit-scrollbar-thumb{background:#22303E;border-radius:9px}
+.brand{padding:16px 16px 14px;border-bottom:1px solid var(--rule)}
+.brand h1{margin:0;font-size:15px;font-weight:600;letter-spacing:.14em;text-transform:uppercase}
+.brand p{margin:5px 0 0;font-size:11px;color:var(--dim);line-height:1.5}
+.grp{border-bottom:1px solid var(--rule)}
+.grp>summary{
+  list-style:none;cursor:pointer;padding:11px 16px;display:flex;align-items:center;gap:8px;
+  font-size:10px;font-weight:600;letter-spacing:.17em;text-transform:uppercase;color:var(--dim);user-select:none;
+}
+.grp>summary::-webkit-details-marker{display:none}
+.grp>summary:hover{color:var(--text)}
+.grp>summary::before{content:"+";font-family:"IBM Plex Mono",monospace;color:var(--faint);font-size:12px;width:9px}
+.grp[open]>summary::before{content:"–"}
+.body{padding:2px 16px 16px}
+.row{margin:0 0 13px}
+.row:last-child{margin-bottom:0}
+label.lbl{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:var(--dim);margin-bottom:5px;gap:8px}
+label.lbl b{font-family:"IBM Plex Mono",monospace;font-weight:500;color:var(--text);font-size:11px;font-variant-numeric:tabular-nums}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:18px;background:transparent;cursor:pointer;display:block}
+input[type=range]::-webkit-slider-runnable-track{height:2px;background:var(--rule);border-radius:2px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;margin-top:-5px;border-radius:50%;background:var(--text);border:none}
+input[type=range]:hover::-webkit-slider-thumb{background:var(--signal)}
+input[type=range]::-moz-range-track{height:2px;background:var(--rule)}
+input[type=range]::-moz-range-thumb{width:12px;height:12px;border:none;border-radius:50%;background:var(--text)}
+select,input[type=number],input[type=text]{
+  width:100%;background:var(--panel-2);color:var(--text);border:1px solid var(--rule);
+  border-radius:3px;padding:6px 8px;font-family:"IBM Plex Mono",monospace;font-size:11px;
+}
+select:focus,input:focus,button:focus-visible{outline:2px solid var(--signal);outline-offset:1px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+button{
+  font-family:"IBM Plex Sans",sans-serif;font-size:11px;font-weight:500;color:var(--text);
+  background:var(--panel-2);border:1px solid var(--rule);border-radius:3px;padding:7px 9px;cursor:pointer;
+}
+button:hover:not(:disabled){border-color:var(--signal-dim);color:#fff}
+button:disabled{opacity:.4;cursor:default}
+button.go{background:var(--signal-dim);border-color:var(--signal);color:#EAFBFE}
+button.go:hover:not(:disabled){background:var(--signal);color:#04161A}
+.seg{display:flex;border:1px solid var(--rule);border-radius:3px;overflow:hidden}
+.seg button{flex:1;border:none;border-radius:0;border-right:1px solid var(--rule);padding:6px 4px}
+.seg button:last-child{border-right:none}
+.seg button[aria-pressed=true]{background:var(--signal-dim);color:#EAFBFE}
+.chk{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--text);cursor:pointer;padding:3px 0}
+.chk input{accent-color:var(--signal);width:13px;height:13px;margin:0}
+.hint{font-size:10.5px;color:var(--faint);line-height:1.5;margin:7px 0 0}
+.hint code{font-family:"IBM Plex Mono",monospace;color:var(--dim)}
+
+/* ---------- stage ---------- */
+main{display:flex;flex-direction:column;min-width:0;background:var(--ink)}
+#top{display:flex;align-items:center;gap:14px;padding:0 16px;height:44px;border-bottom:1px solid var(--rule);flex:none}
+#top .sel{min-width:220px}
+#top .meta{font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--faint);margin-left:auto;text-align:right;line-height:1.45}
+#stage{flex:1;min-height:0;position:relative;display:flex;align-items:center;justify-content:center;padding:18px;overflow:hidden}
+#wrap{position:relative;box-shadow:0 0 0 1px var(--rule),0 24px 60px rgba(0,0,0,.6);background:#000}
+#cv{display:block;cursor:grab}
+#cv.paint{cursor:crosshair}
+#cv.dragging{cursor:grabbing}
+#veil{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(8,12,17,.86);
+  font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.1em;color:var(--signal);text-transform:uppercase}
+#veil.on{display:flex}
+
+/* ---------- slider bar ---------- */
+#bar{flex:none;border-top:1px solid var(--rule);background:var(--panel);padding:13px 20px 15px}
+.barhead{display:flex;align-items:flex-end;gap:18px;margin-bottom:9px}
+.barhead .t{font-size:10px;letter-spacing:.17em;text-transform:uppercase;color:var(--dim)}
+.barhead .v{font-family:"IBM Plex Mono",monospace;font-size:26px;font-weight:500;line-height:1;color:#fff;font-variant-numeric:tabular-nums}
+.stat{margin-left:auto;display:flex;gap:26px;text-align:right}
+.stat div span{display:block;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-bottom:3px}
+.stat div b{font-family:"IBM Plex Mono",monospace;font-size:15px;font-weight:500;color:var(--text);font-variant-numeric:tabular-nums}
+#master{width:100%;height:26px;margin:0}
+#master::-webkit-slider-runnable-track{
+  height:7px;border-radius:4px;
+  background:linear-gradient(90deg,var(--r16) 0%,var(--r8) 26%,var(--r4) 50%,var(--r2) 74%,var(--r1) 100%);
+  opacity:.72;
+}
+#master::-webkit-slider-thumb{
+  -webkit-appearance:none;width:16px;height:20px;margin-top:-6.5px;border-radius:3px;
+  background:#F2F7FB;border:none;box-shadow:0 0 0 1px #000,0 2px 8px rgba(0,0,0,.7)
+}
+#master::-moz-range-track{height:7px;border-radius:4px;
+  background:linear-gradient(90deg,var(--r16),var(--r8),var(--r4),var(--r2),var(--r1));opacity:.72}
+#master::-moz-range-thumb{width:16px;height:20px;border:none;border-radius:3px;background:#F2F7FB}
+.ticks{display:flex;justify-content:space-between;font-family:"IBM Plex Mono",monospace;font-size:9.5px;color:var(--faint);margin-top:1px}
+#budget{display:flex;height:18px;margin-top:11px;border-radius:2px;overflow:hidden;background:var(--panel-2)}
+#budget div{transition:flex-grow .12s linear;position:relative}
+#budget div span{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-family:"IBM Plex Mono",monospace;font-size:9.5px;color:rgba(0,0,0,.72);font-weight:600;white-space:nowrap;overflow:hidden
+}
+.legend{display:flex;gap:14px;margin-top:8px;font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--dim)}
+.legend i{width:9px;height:9px;border-radius:1px;display:inline-block;margin-right:5px;vertical-align:-1px}
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#1A2530;border:1px solid var(--signal-dim);
+  color:var(--text);padding:9px 16px;border-radius:4px;font-size:12px;opacity:0;pointer-events:none;transition:opacity .25s;z-index:50}
+#toast.on{opacity:1}
+</style>
+</head>
+<body>
+<div id="app">
+
+<aside id="rail">
+  <div class="brand">
+    <h1>iMesh Studio</h1>
+    <p>Quadtree refinement plates from real LiDAR DTM. Dial the slider, export frames for After Effects.</p>
+  </div>
+
+  <details class="grp" open><summary>Scene</summary><div class="body">
+    <div class="row">
+      <label class="lbl">Area</label>
+      <select id="region"></select>
+    </div>
+    <div class="row">
+      <label class="lbl">Basemap</label>
+      <select id="basemap">
+        <option value="esri">Satellite — Esri World Imagery</option>
+        <option value="osm">OpenStreetMap standard</option>
+        <option value="carto-light">Carto Light</option>
+        <option value="carto-dark">Carto Dark</option>
+        <option value="hillshade" selected>Hillshade (from this DTM)</option>
+        <option value="elevation">Ground elevation (from this DTM)</option>
+        <option value="none">None — transparent</option>
+      </select>
+    </div>
+    <div class="row">
+      <label class="lbl">Basemap brightness <b id="bmOpV">100%</b></label>
+      <input type="range" id="bmOp" min="0" max="100" value="100">
+    </div>
+    <div class="row">
+      <label class="lbl">Frame</label>
+      <div class="seg" id="aspect">
+        <button data-v="1" aria-pressed="true">1:1</button>
+        <button data-v="1.7778">16:9</button>
+        <button data-v="1.3333">4:3</button>
+        <button data-v="0.8">4:5</button>
+      </div>
+    </div>
+    <div class="row two">
+      <button id="fit">Fit area</button>
+      <button id="zoomIn">Zoom to 512 m</button>
+    </div>
+    <p class="hint">Scroll to zoom, drag to pan. <code>F</code> fits, <code>Space</code> plays the sweep.</p>
+  </div></details>
+
+  <details class="grp" open><summary>Mesh look</summary><div class="body">
+    <div class="row">
+      <label class="lbl">Cell colour</label>
+      <div class="seg" id="fillMode">
+        <button data-v="ramp" aria-pressed="true">Resolution</button>
+        <button data-v="flat">Single</button>
+        <button data-v="none">None</button>
+      </div>
+    </div>
+    <div class="row">
+      <label class="lbl">Cell fill <b id="fillOpV">55%</b></label>
+      <input type="range" id="fillOp" min="0" max="100" value="55">
+    </div>
+    <div class="row">
+      <label class="lbl">Grid lines <b id="lineOpV">85%</b></label>
+      <input type="range" id="lineOp" min="0" max="100" value="85">
+    </div>
+    <div class="row two">
+      <div>
+        <label class="lbl">Line weight <b id="lwV">1 px</b></label>
+        <input type="range" id="lw" min="1" max="4" value="1">
+      </div>
+      <div>
+        <label class="lbl">Line colour</label>
+        <select id="lineCol"><option value="dark">Dark</option><option value="light">Light</option><option value="tint">Tinted</option></select>
+      </div>
+    </div>
+    <div class="row">
+      <label class="chk"><input type="checkbox" id="fade" checked> Fade grid lines on small cells</label>
+      <label class="chk"><input type="checkbox" id="showScale" checked> Scale bar</label>
+      <label class="chk"><input type="checkbox" id="showLegend"> Resolution legend burnt in</label>
+    </div>
+  </div></details>
+
+  <details class="grp" open><summary>Refinement drivers</summary><div class="body">
+    <div class="row">
+      <label class="lbl">Slope &amp; elevation change <b id="wSteepV">1.6</b></label>
+      <input type="range" id="wSteep" min="0" max="400" value="160">
+    </div>
+    <div class="row">
+      <label class="lbl">Built-up areas <b id="wUrbanV">3.0</b></label>
+      <input type="range" id="wUrban" min="0" max="600" value="300">
+    </div>
+    <div class="row">
+      <label class="lbl">Built-up detection <b id="uSensV">0.15 m</b></label>
+      <input type="range" id="uSens" min="6" max="40" value="15">
+      <p class="hint">Height of kerbs, walls and driveways the detector counts as built structure. Lower finds more.</p>
+    </div>
+    <div class="row">
+      <label class="lbl">Field texture <b id="wFieldV">0.5</b></label>
+      <input type="range" id="wField" min="0" max="300" value="50">
+    </div>
+  </div></details>
+
+  <details class="grp" open><summary>River corridor</summary><div class="body">
+    <label class="chk"><input type="checkbox" id="rivOn" checked> Hold channels coarse</label>
+    <div class="row" style="margin-top:11px">
+      <label class="lbl">Corridor width <b id="rivWV">25 m</b></label>
+      <input type="range" id="rivW" min="5" max="80" value="25">
+    </div>
+    <div class="row">
+      <label class="lbl">Depth below surrounds <b id="rivDV">0.6 m</b></label>
+      <input type="range" id="rivD" min="2" max="30" value="6">
+    </div>
+    <div class="row">
+      <label class="lbl">Finest cell allowed in corridor</label>
+      <select id="rivCap"><option value="1">1 m</option><option value="2">2 m</option><option value="4" selected>4 m</option><option value="8">8 m</option></select>
+    </div>
+  </div></details>
+
+  <details class="grp"><summary>Cell size range</summary><div class="body">
+    <div class="row two">
+      <div><label class="lbl">Coarsest</label>
+        <select id="coarsest"><option value="8">8 m</option><option value="16" selected>16 m</option><option value="32">32 m</option></select></div>
+      <div><label class="lbl">Finest</label>
+        <select id="finest"><option value="1" selected>1 m</option><option value="2">2 m</option></select></div>
+    </div>
+    <p class="hint">The slider is calibrated so it moves evenly through mesh density between these two limits.</p>
+  </div></details>
+
+  <details class="grp"><summary>Paint overrides</summary><div class="body">
+    <div class="row">
+      <label class="lbl">Brush</label>
+      <div class="seg" id="brush">
+        <button data-v="off" aria-pressed="true">Off</button>
+        <button data-v="fine">Force fine</button>
+        <button data-v="coarse">Force coarse</button>
+      </div>
+    </div>
+    <div class="row">
+      <label class="lbl">Radius <b id="brV">60 m</b></label>
+      <input type="range" id="br" min="10" max="300" value="60">
+    </div>
+    <div class="row">
+      <label class="lbl">Strength <b id="bsV">4.0×</b></label>
+      <input type="range" id="bs" min="15" max="120" value="40">
+    </div>
+    <button id="brushClear">Clear all painted areas</button>
+    <p class="hint">Paint on the canvas to push a neighbourhood, a floodplain or a scheme footprint to a finer or coarser resolution than the terrain alone would give.</p>
+  </div></details>
+
+  <details class="grp" open><summary>Output</summary><div class="body">
+    <div class="row two">
+      <div><label class="lbl">Long edge</label>
+        <select id="outRes"><option>1024</option><option selected>2048</option><option>3072</option><option>4096</option></select></div>
+      <div><label class="lbl">Background</label>
+        <select id="outBg"><option value="scene" selected>As shown</option><option value="alpha">Mesh only (alpha)</option></select></div>
+    </div>
+    <div class="row"><button id="savePng" class="go" style="width:100%">Save this frame as PNG</button></div>
+    <hr style="border:none;border-top:1px solid var(--rule);margin:15px 0">
+    <div class="row three">
+      <div><label class="lbl">From</label><input type="number" id="seqA" value="0" min="0" max="1" step="0.01"></div>
+      <div><label class="lbl">To</label><input type="number" id="seqB" value="0.85" min="0" max="1" step="0.01"></div>
+      <div><label class="lbl">Frames</label><input type="number" id="seqN" value="90" min="2" max="600"></div>
+    </div>
+    <div class="row two">
+      <label class="chk"><input type="checkbox" id="seqEase" checked> Ease in / out</label>
+      <label class="chk"><input type="checkbox" id="seqPing"> Ping-pong</label>
+    </div>
+    <div class="row"><button id="expSeq" class="go" style="width:100%">Export PNG sequence (.zip)</button></div>
+    <div class="row two">
+      <button id="recWebm">Record WebM</button>
+      <button id="expCsv">Cell counts .csv</button>
+    </div>
+    <p class="hint">The PNG sequence is frame-exact — that is the one to bring into After Effects. WebM records in real time, so it is for quick review only.</p>
+  </div></details>
+
+  <details class="grp"><summary>Playback</summary><div class="body">
+    <div class="row two">
+      <button id="play">Play sweep</button>
+      <button id="stop" disabled>Stop</button>
+    </div>
+    <div class="row">
+      <label class="lbl">Duration <b id="durV">4.0 s</b></label>
+      <input type="range" id="dur" min="10" max="200" value="40">
+    </div>
+    <label class="chk"><input type="checkbox" id="loop" checked> Loop, reversing at each end</label>
+  </div></details>
+
+  <details class="grp"><summary>About this build</summary><div class="body" id="aboutBody"></div></details>
+</aside>
+
+<main>
+  <div id="top">
+    <div class="seg" style="width:280px" id="presets">
+      <button data-v="0">0</button><button data-v="0.25">0.25</button>
+      <button data-v="0.5">0.5</button><button data-v="0.83">0.83</button><button data-v="1">1</button>
+    </div>
+    <div class="meta" id="meta"></div>
+  </div>
+
+  <div id="stage">
+    <div id="wrap">
+      <canvas id="cv"></canvas>
+      <div id="veil"><span id="veilTxt">Building mesh…</span></div>
+    </div>
+  </div>
+
+  <div id="bar">
+    <div class="barhead">
+      <div>
+        <div class="t">Refinement strength</div>
+        <div class="v" id="rVal">0.00</div>
+      </div>
+      <div class="stat">
+        <div><span>Cells</span><b id="sCells">—</b></div>
+        <div><span>vs uniform 1 m</span><b id="sRed">—</b></div>
+        <div><span>Mean cell</span><b id="sMean">—</b></div>
+      </div>
+    </div>
+    <input type="range" id="master" min="0" max="1000" value="0">
+    <div class="ticks"><span>0 — coarse</span><span>0.25</span><span>0.5</span><span>0.75</span><span>1 — finest</span></div>
+    <div id="budget"></div>
+    <div class="legend" id="legend"></div>
+  </div>
+</main>
+</div>
+<div id="toast"></div>
+
+<script>
+/* ============================================================================
+   iMesh Studio
+   Quadtree mesh refinement over a real Environment Agency LiDAR composite DTM.
+   Single file, no build step. Everything below runs in the browser.
+   ========================================================================== */
+const REGIONS = /*__REGIONS__*/null;
+const BUILD = /*__BUILD__*/null;
+
+/* ---------------------------------------------------------------- helpers */
+const $ = s => document.querySelector(s);
+const clamp = (v,a,b) => v<a?a:v>b?b:v;
+const fmt = n => n>=1e6 ? (n/1e6).toFixed(2)+' M' : n>=1e3 ? (n/1e3).toFixed(1)+' k' : String(Math.round(n));
+let toastT;
+function toast(msg,ms=2600){ const t=$('#toast'); t.textContent=msg; t.classList.add('on');
+  clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('on'),ms); }
+
+const RAMP = {1:[30,84,220], 2:[40,150,63], 4:[240,230,140], 8:[240,140,50], 16:[176,24,43], 32:[110,15,27]};
+const rampCss = s => 'rgb('+RAMP[s].join(',')+')';
+
+/* ------------------------------------------------------- OSGB36 → WGS84 */
+function bngToLatLonOSGB(E,N){
+  const a=6377563.396,b=6356256.909,F0=0.9996012717;
+  const lat0=49*Math.PI/180, lon0=-2*Math.PI/180, N0=-100000, E0=400000;
+  const e2=1-(b*b)/(a*a), n=(a-b)/(a+b);
+  let lat=lat0, M=0;
+  for(let i=0;i<20;i++){
+    lat=(N-N0-M)/(a*F0)+lat;
+    const Ma=(1+n+1.25*n*n+1.25*n**3)*(lat-lat0);
+    const Mb=(3*n+3*n*n+2.625*n**3)*Math.sin(lat-lat0)*Math.cos(lat+lat0);
+    const Mc=(1.875*n*n+1.875*n**3)*Math.sin(2*(lat-lat0))*Math.cos(2*(lat+lat0));
+    const Md=(35/24)*n**3*Math.sin(3*(lat-lat0))*Math.cos(3*(lat+lat0));
+    M=b*F0*(Ma-Mb+Mc-Md);
+    if(Math.abs(N-N0-M)<1e-6) break;
+  }
+  const sl=Math.sin(lat), cl=Math.cos(lat), tl=Math.tan(lat);
+  const nu=a*F0/Math.sqrt(1-e2*sl*sl), rho=a*F0*(1-e2)/Math.pow(1-e2*sl*sl,1.5), eta2=nu/rho-1;
+  const VII=tl/(2*rho*nu), VIII=tl/(24*rho*nu**3)*(5+3*tl*tl+eta2-9*tl*tl*eta2), IX=tl/(720*rho*nu**5)*(61+90*tl*tl+45*tl**4);
+  const X=1/(cl*nu), XI=1/(cl*6*nu**3)*(nu/rho+2*tl*tl), XII=1/(cl*120*nu**5)*(5+28*tl*tl+24*tl**4);
+  const XIIA=1/(cl*5040*nu**7)*(61+662*tl*tl+1320*tl**4+720*tl**6);
+  const d=E-E0;
+  return [ (lat-VII*d*d+VIII*d**4-IX*d**6)*180/Math.PI, (lon0+X*d-XI*d**3+XII*d**5-XIIA*d**7)*180/Math.PI ];
+}
+function osgbToWgs84(latD,lonD){
+  const a=6377563.396,b=6356256.909,e2=1-(b*b)/(a*a);
+  const lat=latD*Math.PI/180, lon=lonD*Math.PI/180;
+  const nu=a/Math.sqrt(1-e2*Math.sin(lat)**2);
+  const x=nu*Math.cos(lat)*Math.cos(lon), y=nu*Math.cos(lat)*Math.sin(lon), z=(1-e2)*nu*Math.sin(lat);
+  const tx=446.448,ty=-125.157,tz=542.060,s=20.4894e-6;
+  const rx=0.1502/3600*Math.PI/180, ry=0.2470/3600*Math.PI/180, rz=0.8421/3600*Math.PI/180;
+  const X=tx+x*(1+s)-rz*y+ry*z, Y=ty+rz*x+y*(1+s)-rx*z, Z=tz-ry*x+rx*y+z*(1+s);
+  const a2=6378137,b2=6356752.3142,e22=1-(b2*b2)/(a2*a2);
+  const p=Math.hypot(X,Y); let la=Math.atan2(Z,p*(1-e22));
+  for(let i=0;i<8;i++){ const nu2=a2/Math.sqrt(1-e22*Math.sin(la)**2); la=Math.atan2(Z+e22*nu2*Math.sin(la),p); }
+  return [la*180/Math.PI, Math.atan2(Y,X)*180/Math.PI];
+}
+const bngToLL = (E,N)=>{ const [la,lo]=bngToLatLonOSGB(E,N); return osgbToWgs84(la,lo); };
+const mercX = (lon,z)=> (lon+180)/360*256*Math.pow(2,z);
+const mercY = (lat,z)=>{ const s=Math.sin(lat*Math.PI/180);
+  return 256*Math.pow(2,z)*(0.5-Math.log((1+s)/(1-s))/(4*Math.PI)); };
+
+/* ------------------------------------------------------------- separable */
+function boxBlur(src,dst,w,h,r){            // O(n) running-sum box blur, 2 passes
+  const tmp=new Float32Array(w*h), d=2*r+1;
+  for(let y=0;y<h;y++){ const o=y*w; let s=0;
+    for(let i=-r;i<=r;i++) s+=src[o+clamp(i,0,w-1)];
+    for(let x=0;x<w;x++){ tmp[o+x]=s/d;
+      s+=src[o+clamp(x+r+1,0,w-1)]-src[o+clamp(x-r,0,w-1)]; } }
+  for(let x=0;x<w;x++){ let s=0;
+    for(let i=-r;i<=r;i++) s+=tmp[clamp(i,0,h-1)*w+x];
+    for(let y=0;y<h;y++){ dst[y*w+x]=s/d;
+      s+=tmp[clamp(y+r+1,0,h-1)*w+x]-tmp[clamp(y-r,0,h-1)*w+x]; } }
+  return dst;
+}
+function maxFilter(src,dst,w,h,r){           // separable O(n) sliding max, monotonic deque
+  const tmp=new Float32Array(w*h), dq=new Int32Array(Math.max(w,h)+2);
+  for(let y=0;y<h;y++){
+    const o=y*w; let head=0,tail=0;
+    for(let x=0;x<w+r;x++){
+      if(x<w){ const v=src[o+x];
+        while(tail>head && src[o+dq[tail-1]]<=v) tail--;
+        dq[tail++]=x; }
+      const oi=x-r;
+      if(oi>=0){ while(dq[head]<oi-r) head++; tmp[o+oi]=src[o+dq[head]]; }
+    }
+  }
+  for(let x=0;x<w;x++){
+    let head=0,tail=0;
+    for(let y=0;y<h+r;y++){
+      if(y<h){ const v=tmp[y*w+x];
+        while(tail>head && tmp[dq[tail-1]*w+x]<=v) tail--;
+        dq[tail++]=y; }
+      const oi=y-r;
+      if(oi>=0){ while(dq[head]<oi-r) head++; dst[oi*w+x]=tmp[dq[head]*w+x]; }
+    }
+  }
+  return dst;
+}
+const ss=(v,a,b)=>clamp((v-a)/(b-a),0,1);
+
+/* ========================================================== region state */
+const ST = {
+  reg:null, S:0, z:null,                    // elevation, metres, Float32Array S*S
+  W:null, capExp:null,                      // weight field, min-allowed-size exponent
+  brush:null, brushN:0, brushMpp:8,         // painted multiplier field
+  pyr:null, eCoarse:4, eFine:0,
+  lev:null, tolTable:null, cells:0, budget:null,
+  r:0, tol:1e9,
+  view:{cx:1024,cy:1024,span:2048}, aspect:1,
+  hillCv:null, elevCv:null, baseKey:'',
+};
+const UI = {};
+
+/* ---------------------------------------------------- decode elevation */
+function decodeRegion(reg,img){
+  const S=reg.w, cv=document.createElement('canvas');
+  cv.width=S; cv.height=S;
+  const ctx=cv.getContext('2d',{willReadFrequently:true, colorSpace:'srgb'});
+  ctx.drawImage(img,0,0);
+  const d=ctx.getImageData(0,0,S,S).data;
+  const z=new Float32Array(S*S);
+  let mn=1e30,mx=-1e30;
+  for(let i=0,p=0;i<z.length;i++,p+=4){
+    const v=(d[p]<<8|d[p+1])*reg.step+reg.zmin;
+    z[i]=v; if(v<mn)mn=v; if(v>mx)mx=v;
+  }
+  if(Math.abs(mn-reg.checkMin)>0.05||Math.abs(mx-reg.checkMax)>0.05)
+    console.warn('Elevation decode drift',mn,mx,'expected',reg.checkMin,reg.checkMax);
+  return z;
+}
+
+/* ------------------------------------------------- derived class fields */
+/* The terrain layers depend only on the DTM, so they are computed once per
+   area. Built-up detection depends on one threshold, the channel corridor on
+   two. Weight sliders and the brush only touch the final assembly. */
+const CACHE={terrain:null,urbanKey:'',rivKey:''};
+function deriveTerrain(){
+  const S=ST.S,z=ST.z,n=S*S;
+  const t1=new Float32Array(n), t2=new Float32Array(n);
+  boxBlur(z,t1,S,S,2);
+  const rough=new Float32Array(n);
+  for(let i=0;i<n;i++) rough[i]=Math.abs(z[i]-t1[i]);
+
+  boxBlur(t1,t2,S,S,2);                                   // slope on a smoothed surface
+  const slope=new Float32Array(n);
+  for(let y=0;y<S;y++){
+    const o=y*S, up=(y>0?y-1:0)*S, dn=(y<S-1?y+1:S-1)*S;
+    for(let x=0;x<S;x++){
+      const gx=(t2[o+(x<S-1?x+1:S-1)]-t2[o+(x>0?x-1:0)])*0.5;
+      const gy=(t2[dn+x]-t2[up+x])*0.5;
+      slope[o+x]=Math.sqrt(gx*gx+gy*gy);
+    }
+  }
+  boxBlur(z,t1,S,S,60);                                   // broad local surface
+  const valley=new Float32Array(n);
+  for(let i=0;i<n;i++) valley[i]=t1[i]-z[i];
+
+  CACHE.terrain={rough,slope,valley,scratch1:t1,scratch2:t2};
+  CACHE.urbanKey=''; CACHE.rivKey='';
+}
+function deriveUrban(){
+  const key='u'+UI.uSens;
+  if(CACHE.urbanKey===key) return;
+  const S=ST.S,n=S*S,T=CACHE.terrain,thr=UI.uSens;
+  const t1=T.scratch1,t2=T.scratch2;
+  for(let i=0;i<n;i++) t2[i]=T.rough[i]>thr?1:0;
+  boxBlur(t2,t1,S,S,14); maxFilter(t1,t2,S,S,12); boxBlur(t2,t1,S,S,10);
+  T.urban=(T.urban&&T.urban.length===n)?T.urban:new Float32Array(n);
+  T.urban.set(t1); CACHE.urbanKey=key;
+}
+function deriveRiver(){
+  const key=[UI.rivOn,UI.rivW,UI.rivD].join('|');
+  if(CACHE.rivKey===key) return;
+  const S=ST.S,n=S*S,T=CACHE.terrain;
+  T.riv=(T.riv&&T.riv.length===n)?T.riv:new Float32Array(n);
+  if(!UI.rivOn){ T.riv.fill(0); CACHE.rivKey=key; return; }
+  const rD=UI.rivD;
+  for(let i=0;i<n;i++) T.riv[i]=ss(T.valley[i],rD,rD*3.6);
+  const rr=Math.max(2,Math.round(UI.rivW/2));
+  maxFilter(T.riv,T.scratch1,S,S,rr);
+  boxBlur(T.scratch1,T.riv,S,S,Math.max(2,Math.round(rr*0.35)));
+  CACHE.rivKey=key;
+}
+function assemble(){
+  const S=ST.S,n=S*S,T=CACHE.terrain;
+  const urban=T.urban, slope=T.slope, riv=T.riv, rivOn=UI.rivOn;
+  const capE=Math.round(Math.log2(UI.rivCap));
+  const W=(ST.W&&ST.W.length===n)?ST.W:new Float32Array(n);
+  const cap=(ST.capExp&&ST.capExp.length===n)?ST.capExp:new Uint8Array(n);
+  const bF=ST.brush,bN=ST.brushN,bM=ST.brushMpp;
+  const wS=UI.wSteep,wU=UI.wUrban,wF=UI.wField;
+  for(let y=0;y<S;y++){
+    const by=Math.min(bN-1,(y/bM)|0)*bN, o=y*S;
+    for(let x=0;x<S;x++){
+      const i=o+x, sl=slope[i], rv=riv[i];
+      const u=ss(urban[i],0.10,0.35), st=ss(sl,0.06,0.30);
+      const fl=(1-u)*(1-rv)*(1-ss(sl,0.03,0.12));
+      let w=1+wS*st+wU*u+wF*fl;
+      if(rivOn) w*=(1-0.85*rv);
+      w*=bF[by+Math.min(bN-1,(x/bM)|0)];
+      W[i]=w>0.10?w:0.10;
+      cap[i]=(rivOn&&rv>0.35)?capE:0;
+    }
+  }
+  ST.W=W; ST.capExp=cap;
+  buildPyramids();
+}
+function derive(fresh=false){
+  if(fresh||!CACHE.terrain) deriveTerrain();
+  deriveUrban(); deriveRiver(); assemble();
+}
+
+/* ------------------------------------------------------------- pyramids */
+function buildPyramids(){
+  const S=ST.S, eMax=Math.round(Math.log2(UI.coarsest)), eMin=Math.round(Math.log2(UI.finest));
+  ST.eCoarse=eMax; ST.eFine=eMin;
+  const minZ=[],maxZ=[],mW=[],mCap=[];
+  minZ[0]=ST.z; maxZ[0]=ST.z; mW[0]=ST.W; mCap[0]=ST.capExp;
+  for(let e=1;e<=eMax;e++){
+    const nP=S>>(e-1), nC=S>>e;
+    const a=minZ[e-1],b=maxZ[e-1],c=mW[e-1],d=mCap[e-1];
+    const A=new Float32Array(nC*nC),B=new Float32Array(nC*nC),C=new Float32Array(nC*nC),D=new Uint8Array(nC*nC);
+    for(let y=0;y<nC;y++){
+      const r0=(2*y)*nP, r1=(2*y+1)*nP, o=y*nC;
+      for(let x=0;x<nC;x++){
+        const i0=r0+2*x, i1=r1+2*x;
+        A[o+x]=Math.min(a[i0],a[i0+1],a[i1],a[i1+1]);
+        B[o+x]=Math.max(b[i0],b[i0+1],b[i1],b[i1+1]);
+        C[o+x]=(c[i0]+c[i0+1]+c[i1]+c[i1+1])*0.25;
+        D[o+x]=Math.max(d[i0],d[i0+1],d[i1],d[i1+1]);
+      }
+    }
+    minZ[e]=A;maxZ[e]=B;mW[e]=C;mCap[e]=D;
+  }
+  const crit=[];
+  for(let e=eMin+1;e<=eMax;e++){
+    const nC=S>>e, c=new Float32Array(nC*nC);
+    for(let i=0;i<c.length;i++) c[i]=(maxZ[e][i]-minZ[e][i])*mW[e][i];
+    crit[e]=c;
+  }
+  const scr={};
+  for(let e=eMin;e<=eMax;e++){ const n=S>>e; scr[e]=new Uint8Array(n*n); }
+  ST.pyr={crit,cap:mCap,scr};
+  calibrate();
+}
+
+/* -------------------------------------------- quadtree build / counting */
+function walk(tol,lev){
+  const S=ST.S, {crit,cap,scr}=ST.pyr, eMax=ST.eCoarse, eMin=ST.eFine;
+  for(let e=eMin;e<=eMax;e++) scr[e].fill(e===eMax?1:0);
+  let total=0; const per={};
+  for(let e=eMax;e>eMin;e--){
+    const nC=S>>e, c=crit[e], cp=cap[e], active=scr[e], next=scr[e-1], nN=nC*2, k=1<<e;
+    let stop=0;
+    for(let y=0;y<nC;y++){
+      const row=y*nC, o=(2*y)*nN, o2=(2*y+1)*nN;
+      for(let x=0;x<nC;x++){
+        const i=row+x; if(!active[i])continue;
+        if(c[i]>tol && cp[i]<=e-1){
+          const j=o+2*x, j2=o2+2*x;
+          next[j]=1;next[j+1]=1;next[j2]=1;next[j2+1]=1;
+        } else {
+          stop++;
+          if(lev){ const px=x*k, py=y*k;
+            for(let yy=0;yy<k;yy++) lev.fill(e,(py+yy)*S+px,(py+yy)*S+px+k); }
+        }
+      }
+    }
+    per[k]=stop; total+=stop;
+  }
+  const k=1<<eMin, nC=S>>eMin, active=scr[eMin]; let last=0;
+  for(let y=0;y<nC;y++)for(let x=0;x<nC;x++){
+    if(!active[y*nC+x])continue; last++;
+    if(lev){
+      if(k===1) lev[y*S+x]=eMin;
+      else { const px=x*k,py=y*k; for(let yy=0;yy<k;yy++) lev.fill(eMin,(py+yy)*S+px,(py+yy)*S+px+k); }
+    }
+  }
+  per[k]=last; total+=last;
+  return {total,per};
+}
+const countCells = tol => walk(tol,null);
+function buildLev(tol){
+  const S=ST.S;
+  if(!ST.lev||ST.lev.length!==S*S) ST.lev=new Uint8Array(S*S);
+  const {total,per}=walk(tol,ST.lev);
+  ST.cells=total; ST.budget=per;
+  return ST.lev;
+}
+
+/* --- calibrate the slider so it moves evenly through mesh density ------ */
+function calibrate(){
+  const lt=[],lc=[], hi=Math.log(200), lo=Math.log(2e-4), N=40;
+  for(let i=0;i<N;i++){
+    const t=Math.exp(hi+(lo-hi)*i/(N-1));
+    lt.push(Math.log(t)); lc.push(Math.log(countCells(t).total));
+  }
+  // anchor on what this configuration can actually reach, so the slider is
+  // even end to end even when a corridor cap stops part of the domain refining
+  ST.tolTable={lt,lc,lnMin:lc[0],lnMax:lc[lc.length-1]};
+}
+function tolForR(r){
+  const T=ST.tolTable, want=T.lnMin+(T.lnMax-T.lnMin)*clamp(r,0,1);
+  const {lc,lt}=T;
+  if(want<=lc[0]) return Math.exp(lt[0]);
+  for(let i=1;i<lc.length;i++){
+    if(want<=lc[i]){
+      const f=(want-lc[i-1])/(lc[i]-lc[i-1]||1);
+      return Math.exp(lt[i-1]+f*(lt[i]-lt[i-1]));
+    }
+  }
+  return Math.exp(lt[lt.length-1]);
+}
+
+/* ======================================================== basemap layers */
+function makeHillshade(){
+  const S=ST.S,z=ST.z,cv=document.createElement('canvas');cv.width=S;cv.height=S;
+  const ctx=cv.getContext('2d'),im=ctx.createImageData(S,S),d=im.data;
+  const az=(360-315+90)*Math.PI/180, alt=40*Math.PI/180, ve=2.2;
+  for(let y=0;y<S;y++){
+    const o=y*S,up=(y>0?y-1:0)*S,dn=(y<S-1?y+1:S-1)*S;
+    for(let x=0;x<S;x++){
+      const gx=(z[o+(x<S-1?x+1:S-1)]-z[o+(x>0?x-1:0)])*0.5*ve;
+      const gy=(z[dn+x]-z[up+x])*0.5*ve;
+      const sl=Math.atan(Math.hypot(gx,gy)), as=Math.atan2(-gx,gy);
+      let h=Math.sin(alt)*Math.cos(sl)+Math.cos(alt)*Math.sin(sl)*Math.cos(az-as);
+      h=clamp(h,0,1); const v=(32+h*196)|0, p=(o+x)*4;
+      d[p]=v;d[p+1]=v;d[p+2]=(v*1.03)|0;d[p+3]=255;
+    }
+  }
+  ctx.putImageData(im,0,0); return cv;
+}
+function makeElevation(){
+  const S=ST.S,z=ST.z,cv=document.createElement('canvas');cv.width=S;cv.height=S;
+  const ctx=cv.getContext('2d'),im=ctx.createImageData(S,S),d=im.data;
+  let mn=1e30,mx=-1e30; for(let i=0;i<z.length;i++){if(z[i]<mn)mn=z[i];if(z[i]>mx)mx=z[i];}
+  const stops=[[0,[8,24,92]],[.18,[20,90,200]],[.36,[30,175,190]],[.54,[130,210,90]],
+               [.72,[245,215,80]],[.88,[228,120,45]],[1,[140,20,28]]];
+  const lut=new Uint8Array(768);
+  for(let i=0;i<256;i++){
+    const t=i/255; let a=stops[0],b=stops[stops.length-1];
+    for(let s=0;s<stops.length-1;s++) if(t>=stops[s][0]&&t<=stops[s+1][0]){a=stops[s];b=stops[s+1];break;}
+    const f=(t-a[0])/((b[0]-a[0])||1);
+    for(let c=0;c<3;c++) lut[i*3+c]=a[1][c]+(b[1][c]-a[1][c])*f;
+  }
+  // gentle hillshade multiply so the relief still reads
+  const az=(360-315+90)*Math.PI/180, alt=42*Math.PI/180;
+  for(let y=0;y<S;y++){
+    const o=y*S,up=(y>0?y-1:0)*S,dn=(y<S-1?y+1:S-1)*S;
+    for(let x=0;x<S;x++){
+      const i=o+x, t=((z[i]-mn)/(mx-mn)*255)|0, p=i*4;
+      const gx=(z[o+(x<S-1?x+1:S-1)]-z[o+(x>0?x-1:0)])*1.1, gy=(z[dn+x]-z[up+x])*1.1;
+      const sl=Math.atan(Math.hypot(gx,gy)), as=Math.atan2(-gx,gy);
+      const h=0.65+0.5*clamp(Math.sin(alt)*Math.cos(sl)+Math.cos(alt)*Math.sin(sl)*Math.cos(az-as),0,1);
+      d[p]=clamp(lut[t*3]*h,0,255); d[p+1]=clamp(lut[t*3+1]*h,0,255); d[p+2]=clamp(lut[t*3+2]*h,0,255); d[p+3]=255;
+    }
+  }
+  ctx.putImageData(im,0,0); return cv;
+}
+
+/* -- web tiles ---------------------------------------------------------- */
+const TILE_SRC = {
+  esri:{url:(z,x,y)=>`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`,max:19},
+  osm:{url:(z,x,y)=>`https://tile.openstreetmap.org/${z}/${x}/${y}.png`,max:19},
+  'carto-light':{url:(z,x,y)=>`https://basemaps.cartocdn.com/light_all/${z}/${x}/${y}.png`,max:19},
+  'carto-dark':{url:(z,x,y)=>`https://basemaps.cartocdn.com/dark_all/${z}/${x}/${y}.png`,max:19},
+};
+const tileCache=new Map(); let tilePending=0, tainted=false;
+function getTile(src,z,x,y,onload){
+  const k=src+'/'+z+'/'+x+'/'+y;
+  if(tileCache.has(k)) return tileCache.get(k);
+  const img=new Image(); img.crossOrigin='anonymous';
+  img.onload=()=>{tilePending--;onload();}; img.onerror=()=>{tilePending--;img.failed=true;onload();};
+  img.src=TILE_SRC[src].url(z,x,y); tilePending++;
+  tileCache.set(k,img); return img;
+}
+// affine mapping mercator-pixel -> canvas-pixel, fitted from three control points
+function fitAffine(p,q){
+  const m00=p[1][0]-p[0][0], m01=p[2][0]-p[0][0], m10=p[1][1]-p[0][1], m11=p[2][1]-p[0][1];
+  const det=m00*m11-m01*m10;
+  const i00=m11/det, i01=-m01/det, i10=-m10/det, i11=m00/det;
+  const q0=[q[1][0]-q[0][0],q[2][0]-q[0][0]], q1=[q[1][1]-q[0][1],q[2][1]-q[0][1]];
+  const a=q0[0]*i00+q0[1]*i10, c=q0[0]*i01+q0[1]*i11;
+  const b=q1[0]*i00+q1[1]*i10, d=q1[0]*i01+q1[1]*i11;
+  return {a,b,c,d,e:q[0][0]-(a*p[0][0]+c*p[0][1]), f:q[0][1]-(b*p[0][0]+d*p[0][1])};
+}
+function drawTiles(ctx,W,H,view,src,redraw){
+  const reg=ST.reg, S=ST.S;
+  const x0=view.cx-view.span/2, y0=view.cy-view.spanY/2;                  // region-local metres
+  const toBng=(lx,ly)=>[reg.east+lx, reg.north+ (S-ly)];                  // ly measured from top
+  const mppx=view.span/W;
+  const lat0=bngToLL(...toBng(view.cx,view.cy))[0];
+  let zz=Math.round(Math.log2(156543.03392*Math.cos(lat0*Math.PI/180)/mppx));
+  zz=clamp(zz,1,TILE_SRC[src].max);
+  const P=[],Q=[];
+  [[x0,y0],[x0+view.span,y0],[x0,y0+view.spanY]].forEach(([lx,ly],i)=>{
+    const [la,lo]=bngToLL(...toBng(lx,ly));
+    P.push([mercX(lo,zz),mercY(la,zz)]);
+    Q.push([[0,0],[W,0],[0,H]][i]);
+  });
+  const A=fitAffine(P,Q);
+  const xs=P.map(p=>p[0]), ys=P.map(p=>p[1]);
+  // fourth corner
+  const x3=P[1][0]+P[2][0]-P[0][0], y3=P[1][1]+P[2][1]-P[0][1]; xs.push(x3); ys.push(y3);
+  const tx0=Math.floor(Math.min(...xs)/256), tx1=Math.floor(Math.max(...xs)/256);
+  const ty0=Math.floor(Math.min(...ys)/256), ty1=Math.floor(Math.max(...ys)/256);
+  if((tx1-tx0+1)*(ty1-ty0+1)>600) return;
+  ctx.save(); ctx.setTransform(A.a,A.b,A.c,A.d,A.e,A.f);
+  ctx.imageSmoothingQuality='high';
+  const n=1<<zz;
+  for(let ty=ty0;ty<=ty1;ty++)for(let tx=tx0;tx<=tx1;tx++){
+    const wx=((tx%n)+n)%n; if(ty<0||ty>=n) continue;
+    const img=getTile(src,zz,wx,ty,redraw);
+    if(img.complete&&!img.failed&&img.naturalWidth){
+      try{ ctx.drawImage(img,tx*256,ty*256,256.5,256.5); }catch(e){}
+    }
+  }
+  ctx.restore();
+}
+
+/* ============================================================== renderer */
+const meshCv=document.createElement('canvas');
+function renderMesh(W,H,view){
+  if(meshCv.width!==W||meshCv.height!==H){meshCv.width=W;meshCv.height=H;}
+  const ctx=meshCv.getContext('2d',{willReadFrequently:false});
+  const im=ctx.createImageData(W,H), d=im.data;
+  const S=ST.S, lev=ST.lev;
+  const mppx=view.span/W;                          // metres per output pixel
+  const x0=view.cx-view.span/2, y0=view.cy-view.spanY/2;
+  const lw=UI.lw, fillA=(UI.fillOp*255)|0, lineA=(UI.lineOp*255)|0;
+  const mode=UI.fillMode, lineCol=UI.lineCol, inv=1/mppx, fade=UI.fade;
+  const flat=[228,236,244];
+  for(let py=0;py<H;py++){
+    const my=y0+(py+0.5)*mppx, sy=my|0, row=py*W;
+    if(my<0||sy>=S){ for(let px=0;px<W;px++) d[(row+px)*4+3]=0; continue; }
+    const rowOff=sy*S;
+    for(let px=0;px<W;px++){
+      const mx=x0+(px+0.5)*mppx, sx=mx|0, p=(row+px)*4;
+      if(mx<0||sx>=S){ d[p+3]=0; continue; }
+      const e=lev[rowOff+sx], size=1<<e, m=size-1;
+      // distance from the cell's top and left edges, in output pixels
+      const onEdge = (mx-(sx&~m))*inv<lw || (my-(sy&~m))*inv<lw;
+      const c=RAMP[size]||RAMP[16];
+      let R,G,B,fa;
+      if(mode==='ramp'){ R=c[0];G=c[1];B=c[2];fa=fillA; }
+      else if(mode==='flat'){ R=flat[0];G=flat[1];B=flat[2];fa=fillA; }
+      else { R=0;G=0;B=0;fa=0; }
+      if(onEdge && lineA>0){
+        // once a cell is only a pixel or two across, the grid is noise — fade it
+        let la=lineA;
+        if(fade){ const cp=size*inv; la=lineA*clamp((cp-1.1)/2.4,0,1); }
+        if(la>0.5){
+          let LR,LG,LB;
+          if(lineCol==='dark'){ LR=(R*0.3)|0;LG=(G*0.3)|0;LB=(B*0.3)|0; if(mode==='none'){LR=10;LG=15;LB=21;} }
+          else if(lineCol==='light'){ LR=246;LG=250;LB=253; }
+          else { LR=Math.min(255,c[0]*1.35|0);LG=Math.min(255,c[1]*1.35|0);LB=Math.min(255,c[2]*1.35|0); }
+          const t=la/255, u=fa/255*(1-t), out=t+u;
+          R=(LR*t+R*u)/out; G=(LG*t+G*u)/out; B=(LB*t+B*u)/out; fa=out*255;
+        }
+      }
+      d[p]=R;d[p+1]=G;d[p+2]=B;d[p+3]=fa;
+    }
+  }
+  ctx.putImageData(im,0,0);
+  return meshCv;
+}
+
+function overlays(ctx,W,H,view){
+  const k=W/1024;
+  if(UI.showScale){
+    const targets=[10,20,25,50,100,200,250,500,1000];
+    const want=view.span*0.22;
+    let m=targets.reduce((a,b)=>Math.abs(b-want)<Math.abs(a-want)?b:a);
+    const px=m/view.span*W, x=24*k, y=H-26*k;
+    ctx.save();
+    ctx.strokeStyle='rgba(0,0,0,.55)'; ctx.lineWidth=4*k;
+    ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+px,y); ctx.stroke();
+    ctx.strokeStyle='#fff'; ctx.lineWidth=2*k;
+    ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+px,y);
+    ctx.moveTo(x,y-5*k);ctx.lineTo(x,y+5*k); ctx.moveTo(x+px,y-5*k);ctx.lineTo(x+px,y+5*k); ctx.stroke();
+    ctx.font=`500 ${12*k}px "IBM Plex Mono",monospace`; ctx.fillStyle='#fff';
+    ctx.textBaseline='bottom'; ctx.lineWidth=3*k; ctx.strokeStyle='rgba(0,0,0,.6)';
+    ctx.strokeText(m+' m',x,y-8*k); ctx.fillText(m+' m',x,y-8*k);
+    ctx.restore();
+  }
+  if(UI.showLegend){
+    const sizes=Object.keys(ST.budget||{}).map(Number).sort((a,b)=>a-b);
+    ctx.save();
+    const sw=13*k, gap=7*k; let x=W-24*k, y=24*k;
+    ctx.font=`500 ${11.5*k}px "IBM Plex Mono",monospace`; ctx.textBaseline='middle'; ctx.textAlign='right';
+    const rows=sizes.slice().reverse();
+    const boxH=rows.length*(sw+gap)+gap*2;
+    ctx.fillStyle='rgba(8,12,17,.7)';
+    ctx.fillRect(W-24*k-96*k, 14*k, 96*k, boxH+10*k);
+    y=14*k+gap*2;
+    ctx.textAlign='left';
+    rows.forEach(s=>{
+      ctx.fillStyle=rampCss(s); ctx.fillRect(W-24*k-96*k+10*k,y,sw,sw);
+      ctx.fillStyle='#DCE6F0'; ctx.fillText(s+' m',W-24*k-96*k+10*k+sw+8*k,y+sw/2);
+      y+=sw+gap;
+    });
+    ctx.restore();
+  }
+}
+
+function composite(ctx,W,H,view,forExport){
+  ctx.clearRect(0,0,W,H);
+  const bm=UI.basemap, alphaOnly=forExport&&UI.outBg==='alpha';
+  if(!alphaOnly && bm!=='none'){
+    ctx.globalAlpha=UI.bmOp;
+    if(bm==='hillshade'||bm==='elevation'){
+      const src=bm==='hillshade'?(ST.hillCv||=makeHillshade()):(ST.elevCv||=makeElevation());
+      const x0=view.cx-view.span/2, y0=view.cy-view.spanY/2;
+      ctx.imageSmoothingQuality='high';
+      ctx.drawImage(src,x0,y0,view.span,view.spanY,0,0,W,H);
+    } else {
+      ctx.fillStyle='#0A0E13'; ctx.fillRect(0,0,W,H);
+      drawTiles(ctx,W,H,view,bm,()=>{ if(!tilePending) scheduleDraw(); });
+    }
+    ctx.globalAlpha=1;
+  }
+  // supersample the mesh when one output pixel covers more than ~0.7 m of ground
+  const mppx=view.span/W;
+  let ms=clamp(Math.round(mppx/0.7),1,3);
+  while(W*ms>4600||H*ms>4600) ms--;
+  ms=Math.max(1,ms);
+  const m=renderMesh(W*ms,H*ms,view);
+  ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high';
+  ctx.drawImage(m,0,0,W*ms,H*ms,0,0,W,H);
+  if(!alphaOnly) overlays(ctx,W,H,view);
+}
+function awaitTiles(ms=9000){
+  return new Promise(res=>{
+    const t0=performance.now();
+    (function chk(){ if(tilePending<=0||performance.now()-t0>ms) res(); else setTimeout(chk,120); })();
+  });
+}
+
+/* ------------------------------------------------------------ main draw */
+const cv=$('#cv'), cvx=cv.getContext('2d');
+let drawQueued=false;
+function scheduleDraw(){ if(drawQueued)return; drawQueued=true; requestAnimationFrame(()=>{drawQueued=false;draw();}); }
+function draw(){
+  const st=$('#stage').getBoundingClientRect();
+  const pad=36, aw=st.width-pad, ah=st.height-pad;
+  let W=aw,H=aw/ST.aspect; if(H>ah){H=ah;W=ah*ST.aspect;}
+  W=Math.max(240,Math.round(W)); H=Math.max(180,Math.round(H));
+  const dpr=Math.min(2,window.devicePixelRatio||1);
+  if(cv.width!==Math.round(W*dpr)||cv.height!==Math.round(H*dpr)){
+    cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr);
+    cv.style.width=W+'px'; cv.style.height=H+'px';
+  }
+  ST.view.spanY=ST.view.span/ST.aspect;
+  composite(cvx,cv.width,cv.height,ST.view,false);
+  updateMeta();
+}
+function updateMeta(){
+  const reg=ST.reg, v=ST.view;
+  const cE=reg.east+v.cx, cN=reg.north+(ST.S-v.cy);
+  const [la,lo]=bngToLL(cE,cN);
+  $('#meta').innerHTML=
+    `${reg.name}<br>centre ${Math.round(cE)} E ${Math.round(cN)} N &nbsp;·&nbsp; ${la.toFixed(5)}, ${lo.toFixed(5)}`+
+    `<br>view ${Math.round(v.span)} × ${Math.round(v.spanY)} m &nbsp;·&nbsp; ${UI.finest}–${UI.coarsest} m cells`;
+}
+
+/* ------------------------------------------------------------- readouts */
+function refresh(rebuild=true){
+  if(rebuild){ ST.tol=tolForR(ST.r); buildLev(ST.tol); }
+  const S=ST.S, area=S*S;
+  $('#rVal').textContent=ST.r.toFixed(2);
+  $('#sCells').textContent=fmt(ST.cells);
+  $('#sRed').textContent=(100*(1-ST.cells/area)).toFixed(1)+'% ↓';
+  $('#sMean').textContent=Math.sqrt(area/ST.cells).toFixed(1)+' m';
+  const b=$('#budget'); b.innerHTML='';
+  const sizes=Object.keys(ST.budget).map(Number).sort((a,b2)=>b2-a);
+  const leg=[];
+  sizes.forEach(s=>{
+    const n=ST.budget[s]||0, a=n*s*s/area;
+    const el=document.createElement('div');
+    el.style.flexGrow=Math.max(a,0); el.style.background=rampCss(s);
+    if(a>0.07) el.innerHTML=`<span>${(a*100).toFixed(0)}%</span>`;
+    el.title=`${s} m — ${fmt(n)} cells, ${(a*100).toFixed(1)}% of area`;
+    b.appendChild(el);
+    leg.push(`<span><i style="background:${rampCss(s)}"></i>${s} m · ${fmt(n)}</span>`);
+  });
+  $('#legend').innerHTML=leg.join('');
+  scheduleDraw();
+}
+
+/* ======================================================= region loading */
+function loadRegion(idx){
+  const reg=REGIONS[idx];
+  $('#veilTxt').textContent='Loading terrain…'; $('#veil').classList.add('on');
+  const img=new Image();
+  img.onload=()=>{
+    setTimeout(()=>{
+      ST.reg=reg; ST.S=reg.w; ST.z=decodeRegion(reg,img);
+      ST.hillCv=null; ST.elevCv=null; ST.lev=null;
+      ST.brushN=Math.ceil(reg.w/ST.brushMpp);
+      ST.brush=new Float32Array(ST.brushN*ST.brushN).fill(1);
+      ST.view={cx:reg.w/2,cy:reg.w/2,span:reg.w};
+      $('#veilTxt').textContent='Reading terrain sensitivity…';
+      setTimeout(()=>{ derive(true); refresh(); $('#veil').classList.remove('on'); },16);
+    },16);
+  };
+  img.onerror=()=>{ $('#veilTxt').innerHTML=
+    'Terrain failed to load.<br>If you opened this from disk, serve the folder instead:<br>'+
+    '<code style="color:#78879A">python3 -m http.server 8000</code>'; };
+  img.src=reg.data||reg.src;
+}
+
+/* ================================================================== UI  */
+function readUI(){
+  UI.uSens=+$('#uSens').value/100;
+  UI.wSteep=+$('#wSteep').value/100; UI.wUrban=+$('#wUrban').value/100; UI.wField=+$('#wField').value/100;
+  UI.rivOn=$('#rivOn').checked; UI.rivW=+$('#rivW').value; UI.rivD=+$('#rivD').value/10; UI.rivCap=+$('#rivCap').value;
+  UI.coarsest=+$('#coarsest').value; UI.finest=+$('#finest').value;
+  UI.basemap=$('#basemap').value; UI.bmOp=+$('#bmOp').value/100;
+  UI.fillOp=+$('#fillOp').value/100; UI.lineOp=+$('#lineOp').value/100;
+  UI.lw=+$('#lw').value; UI.lineCol=$('#lineCol').value;
+  UI.fade=$('#fade').checked; UI.showScale=$('#showScale').checked; UI.showLegend=$('#showLegend').checked;
+  UI.outBg=$('#outBg').value;
+  $('#uSensV').textContent=UI.uSens.toFixed(2)+' m';
+  $('#wSteepV').textContent=UI.wSteep.toFixed(1);
+  $('#wUrbanV').textContent=UI.wUrban.toFixed(1);
+  $('#wFieldV').textContent=UI.wField.toFixed(1);
+  $('#rivWV').textContent=UI.rivW+' m'; $('#rivDV').textContent=UI.rivD.toFixed(1)+' m';
+  $('#bmOpV').textContent=Math.round(UI.bmOp*100)+'%';
+  $('#fillOpV').textContent=Math.round(UI.fillOp*100)+'%';
+  $('#lineOpV').textContent=Math.round(UI.lineOp*100)+'%';
+  $('#lwV').textContent=UI.lw+' px';
+  $('#brV').textContent=$('#br').value+' m';
+  $('#bsV').textContent=(+$('#bs').value/10).toFixed(1)+'×';
+  $('#durV').textContent=(+$('#dur').value/10).toFixed(1)+' s';
+}
+function busy(txt,fn){
+  $('#veilTxt').textContent=txt; $('#veil').classList.add('on');
+  setTimeout(()=>{ try{fn();}finally{ $('#veil').classList.remove('on'); } },20);
+}
+function onDriverChange(){ readUI(); busy('Recomputing sensitivity…',()=>{derive(false);refresh();}); }
+function onLevelChange(){ readUI(); busy('Rebuilding quadtree…',()=>{buildPyramids();refresh();}); }
+function onLookChange(){ readUI(); refresh(false); }
+
+['wSteep','wUrban','wField','uSens','rivW','rivD'].forEach(id=>{
+  const el=$('#'+id);
+  el.addEventListener('input',()=>{readUI();});
+  el.addEventListener('change',onDriverChange);
+});
+['rivOn','rivCap'].forEach(id=>$('#'+id).addEventListener('change',onDriverChange));
+['coarsest','finest'].forEach(id=>$('#'+id).addEventListener('change',onLevelChange));
+['bmOp','fillOp','lineOp','lw'].forEach(id=>$('#'+id).addEventListener('input',onLookChange));
+['basemap','lineCol','fade','showScale','showLegend','outBg'].forEach(id=>$('#'+id).addEventListener('change',onLookChange));
+['br','bs','dur'].forEach(id=>$('#'+id).addEventListener('input',readUI));
+
+function segment(sel,cb){
+  const root=$(sel);
+  root.addEventListener('click',e=>{
+    const b=e.target.closest('button'); if(!b)return;
+    [...root.querySelectorAll('button')].forEach(x=>x.setAttribute('aria-pressed',x===b));
+    cb(b.dataset.v);
+  });
+}
+segment('#fillMode',v=>{UI.fillMode=v;refresh(false);});
+segment('#aspect',v=>{ST.aspect=+v;scheduleDraw();});
+segment('#brush',v=>{UI.brushMode=v;cv.classList.toggle('paint',v!=='off');});
+$('#presets').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b)return;
+  setR(+b.dataset.v);
+});
+
+$('#master').addEventListener('input',e=>{ setR(+e.target.value/1000); });
+function setR(r){ ST.r=clamp(r,0,1); $('#master').value=Math.round(ST.r*1000); refresh(); }
+
+$('#region').addEventListener('change',e=>loadRegion(+e.target.value));
+$('#fit').addEventListener('click',()=>{ST.view.cx=ST.S/2;ST.view.cy=ST.S/2;ST.view.span=ST.S;scheduleDraw();});
+$('#zoomIn').addEventListener('click',()=>{ST.view.span=512;scheduleDraw();});
+$('#brushClear').addEventListener('click',()=>{ST.brush.fill(1);busy('Clearing…',()=>{assemble();refresh();});toast('Painted overrides cleared');});
+
+/* -------------------------------------------------- canvas interaction */
+let drag=null;
+function canvasToRegion(ev){
+  const r=cv.getBoundingClientRect(), v=ST.view;
+  const fx=(ev.clientX-r.left)/r.width, fy=(ev.clientY-r.top)/r.height;
+  return [v.cx-v.span/2+fx*v.span, v.cy-v.spanY/2+fy*v.spanY];
+}
+function paintAt(mx,my){
+  const N=ST.brushN, mpp=ST.brushMpp, rad=+$('#br').value, k=+$('#bs').value/10;
+  const mult=UI.brushMode==='fine'?k:1/k;
+  const cx=mx/mpp, cy=my/mpp, rr=rad/mpp;
+  const x0=Math.max(0,(cx-rr)|0), x1=Math.min(N-1,(cx+rr)|0);
+  const y0=Math.max(0,(cy-rr)|0), y1=Math.min(N-1,(cy+rr)|0);
+  for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){
+    const d=Math.hypot(x-cx,y-cy)/rr; if(d>1)continue;
+    const f=Math.pow(1-d*d,1.5);
+    const cur=ST.brush[y*N+x];
+    ST.brush[y*N+x]=clamp(cur*(1+(mult-1)*f*0.35),0.05,20);
+  }
+}
+cv.addEventListener('pointerdown',ev=>{
+  cv.setPointerCapture(ev.pointerId);
+  if(UI.brushMode&&UI.brushMode!=='off'){ drag={paint:true}; paintAt(...canvasToRegion(ev)); }
+  else { drag={x:ev.clientX,y:ev.clientY,cx:ST.view.cx,cy:ST.view.cy}; cv.classList.add('dragging'); }
+});
+cv.addEventListener('pointermove',ev=>{
+  if(!drag)return;
+  if(drag.paint){ paintAt(...canvasToRegion(ev)); return; }
+  const r=cv.getBoundingClientRect();
+  ST.view.cx=clamp(drag.cx-(ev.clientX-drag.x)/r.width*ST.view.span,0,ST.S);
+  ST.view.cy=clamp(drag.cy-(ev.clientY-drag.y)/r.height*ST.view.spanY,0,ST.S);
+  scheduleDraw();
+});
+cv.addEventListener('pointerup',()=>{
+  cv.classList.remove('dragging');
+  if(drag&&drag.paint){ drag=null; busy('Applying paint…',()=>{assemble();refresh();}); return; }
+  drag=null;
+});
+cv.addEventListener('wheel',ev=>{
+  ev.preventDefault();
+  const [mx,my]=canvasToRegion(ev), v=ST.view;
+  const f=Math.exp(ev.deltaY*0.0016);
+  const ns=clamp(v.span*f,48,ST.S*1.4);
+  v.cx=mx+(v.cx-mx)*(ns/v.span); v.cy=my+(v.cy-my)*(ns/v.span); v.span=ns;
+  scheduleDraw();
+},{passive:false});
+window.addEventListener('resize',scheduleDraw);
+window.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;
+  if(e.key==='f'){ $('#fit').click(); }
+  if(e.key===' '){ e.preventDefault(); playing?stopPlay():startPlay(); }
+  if(e.key==='ArrowRight'){ setR(ST.r+(e.shiftKey?0.05:0.01)); }
+  if(e.key==='ArrowLeft'){ setR(ST.r-(e.shiftKey?0.05:0.01)); }
+});
+
+/* ------------------------------------------------------------ playback */
+let playing=false, playT0=0, playDir=1;
+function startPlay(){
+  playing=true; $('#play').disabled=true; $('#stop').disabled=false;
+  playT0=performance.now()-ST.r*(+$('#dur').value*100);
+  requestAnimationFrame(tick);
+}
+function stopPlay(){ playing=false; $('#play').disabled=false; $('#stop').disabled=true; }
+function tick(t){
+  if(!playing)return;
+  const dur=+$('#dur').value*100;
+  let p=(t-playT0)/dur;
+  if(p>=1){ if($('#loop').checked){ playT0=t; playDir*=-1; p=0; } else { p=1; stopPlay(); } }
+  const r=playDir>0?p:1-p;
+  setR(clamp(r,0,1));
+  if(playing) requestAnimationFrame(tick);
+}
+$('#play').addEventListener('click',startPlay);
+$('#stop').addEventListener('click',stopPlay);
+
+/* ================================================================ export */
+function exportCanvas(){
+  const long=+$('#outRes').value;
+  let W,H; if(ST.aspect>=1){W=long;H=Math.round(long/ST.aspect);}else{H=long;W=Math.round(long*ST.aspect);}
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const ctx=c.getContext('2d');
+  const v={cx:ST.view.cx,cy:ST.view.cy,span:ST.view.span,spanY:ST.view.span/ST.aspect};
+  composite(ctx,W,H,v,true);
+  return c;
+}
+function downloadBlob(blob,name){
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+}
+const stamp=()=>`${ST.reg.id}_${UI.finest}-${UI.coarsest}m`;
+$('#savePng').addEventListener('click',async()=>{
+  $('#veilTxt').textContent='Rendering plate…'; $('#veil').classList.add('on');
+  await new Promise(r=>setTimeout(r,20));
+  exportCanvas();                      // warm the tile cache at export zoom
+  await awaitTiles();
+  const c=exportCanvas();
+  c.toBlob(b=>{
+    $('#veil').classList.remove('on');
+    if(!b){toast('Export blocked — basemap tiles tainted the canvas. Switch to Hillshade or None.',5500);return;}
+    downloadBlob(b,`imesh_${stamp()}_r${ST.r.toFixed(2)}.png`); toast('PNG saved');
+  },'image/png');
+});
+
+/* ---- store-only ZIP writer (no dependencies) ---- */
+const CRC=(()=>{const t=new Uint32Array(256);
+  for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
+function crc32(u8){let c=0xFFFFFFFF;for(let i=0;i<u8.length;i++)c=CRC[(c^u8[i])&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
+function zipStore(files){
+  const enc=new TextEncoder(), parts=[], central=[]; let off=0;
+  const u16=v=>[v&255,(v>>8)&255], u32=v=>[v&255,(v>>8)&255,(v>>16)&255,(v>>>24)&255];
+  files.forEach(f=>{
+    const nm=enc.encode(f.name), crc=crc32(f.data);
+    const lh=new Uint8Array([80,75,3,4,...u16(20),...u16(0),...u16(0),...u16(0),...u16(0),
+      ...u32(crc),...u32(f.data.length),...u32(f.data.length),...u16(nm.length),...u16(0)]);
+    parts.push(lh,nm,f.data);
+    central.push(new Uint8Array([80,75,1,2,...u16(20),...u16(20),...u16(0),...u16(0),...u16(0),...u16(0),
+      ...u32(crc),...u32(f.data.length),...u32(f.data.length),...u16(nm.length),
+      ...u16(0),...u16(0),...u16(0),...u16(0),...u32(0),...u32(off)]),nm);
+    off+=lh.length+nm.length+f.data.length;
+  });
+  const cdStart=off; let cdLen=0; central.forEach(c=>cdLen+=c.length);
+  const eocd=new Uint8Array([80,75,5,6,...u16(0),...u16(0),...u16(files.length),...u16(files.length),
+    ...u32(cdLen),...u32(cdStart),...u16(0)]);
+  return new Blob([...parts,...central,eocd],{type:'application/zip'});
+}
+const ease=t=>t<0.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+
+$('#expSeq').addEventListener('click',async()=>{
+  const a=clamp(+$('#seqA').value,0,1), b=clamp(+$('#seqB').value,0,1);
+  let n=clamp(+$('#seqN').value|0,2,600);
+  const useEase=$('#seqEase').checked, ping=$('#seqPing').checked;
+  const rSaved=ST.r;
+  const btn=$('#expSeq'); btn.disabled=true;
+  $('#veil').classList.add('on');
+  const files=[]; let blocked=false;
+  const seq=[]; for(let i=0;i<n;i++){ let t=i/(n-1); if(useEase)t=ease(t); seq.push(a+(b-a)*t); }
+  if(ping) for(let i=n-2;i>0;i--) seq.push(seq[i]);
+  $('#veilTxt').textContent='Loading basemap at export size…';
+  await new Promise(r=>setTimeout(r,20));
+  exportCanvas(); await awaitTiles();
+  for(let i=0;i<seq.length;i++){
+    $('#veilTxt').textContent=`Rendering frame ${i+1} of ${seq.length}…`;
+    await new Promise(r=>setTimeout(r,0));
+    ST.r=seq[i]; ST.tol=tolForR(ST.r); buildLev(ST.tol);
+    const c=exportCanvas();
+    const blob=await new Promise(res=>c.toBlob(res,'image/png'));
+    if(!blob){ blocked=true; break; }
+    files.push({name:`imesh_${String(i).padStart(4,'0')}.png`,data:new Uint8Array(await blob.arrayBuffer())});
+  }
+  $('#veil').classList.remove('on'); btn.disabled=false;
+  ST.r=rSaved; setR(rSaved);
+  if(blocked){ toast('Export blocked — basemap tiles tainted the canvas. Switch to Hillshade or None.',5500); return; }
+  files.push({name:'frames.txt',data:new TextEncoder().encode(
+    seq.map((r,i)=>`${String(i).padStart(4,'0')}\t${r.toFixed(4)}`).join('\n'))});
+  downloadBlob(zipStore(files),`imesh_seq_${stamp()}.zip`);
+  toast(`${files.length-1} frames exported`);
+});
+
+$('#recWebm').addEventListener('click',async()=>{
+  if(!window.MediaRecorder){toast('MediaRecorder not available in this browser');return;}
+  const btn=$('#recWebm'); btn.disabled=true; btn.textContent='Recording…';
+  const stream=cv.captureStream(30);
+  const mime=['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'].find(m=>MediaRecorder.isTypeSupported(m));
+  const rec=new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:18e6});
+  const chunks=[]; rec.ondataavailable=e=>e.data.size&&chunks.push(e.data);
+  rec.onstop=()=>{ downloadBlob(new Blob(chunks,{type:'video/webm'}),`imesh_${stamp()}.webm`);
+    btn.disabled=false; btn.textContent='Record WebM'; toast('WebM saved'); };
+  rec.start();
+  const a=+$('#seqA').value, b=+$('#seqB').value, dur=+$('#dur').value*100;
+  const t0=performance.now();
+  await new Promise(done=>{
+    (function step(t){
+      let p=(t-t0)/dur;
+      if(p>=1){ setR(b); setTimeout(done,180); return; }
+      setR(a+(b-a)*ease(p)); requestAnimationFrame(step);
+    })(t0);
+  });
+  rec.stop();
+});
+
+$('#expCsv').addEventListener('click',()=>{
+  const rows=['refinement,tolerance,cells,percent_reduction_vs_1m,mean_cell_m'];
+  const area=ST.S*ST.S;
+  for(let i=0;i<=100;i++){
+    const r=i/100, t=tolForR(r), c=countCells(t).total;
+    rows.push([r.toFixed(2),t.toPrecision(5),c,(100*(1-c/area)).toFixed(2),Math.sqrt(area/c).toFixed(2)].join(','));
+  }
+  downloadBlob(new Blob([rows.join('\n')],{type:'text/csv'}),`imesh_cells_${stamp()}.csv`);
+  toast('CSV saved');
+});
+
+/* ---------------------------------------------------------------- boot */
+(function init(){
+  if(!REGIONS||!REGIONS.length){
+    document.body.innerHTML='<div style="max-width:620px;margin:16vh auto;padding:28px;'+
+      'font:400 14px/1.65 \'IBM Plex Sans\',system-ui,sans-serif;color:#C8D4E0">'+
+      '<h1 style="font-size:16px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 14px">iMesh Studio — template</h1>'+
+      '<p>This file is the template. It has no terrain baked into it, so there is nothing to render.</p>'+
+      '<p>Open <b>imesh_studio.html</b> instead, or build a copy from a LiDAR tile:</p>'+
+      '<pre style="background:#0F151C;border:1px solid #1D2732;border-radius:4px;padding:14px;'+
+      'font:400 12px/1.6 \'IBM Plex Mono\',monospace;color:#78879A;overflow:auto">'+
+      'python3 build_imesh_studio.py \\\n  --tif SO83nw_DTM_1m.tif \\\n  --out imesh_studio.html \\\n'+
+      '  --window 382950 235452 2048 "Brook, village and lanes"</pre></div>';
+    return;
+  }
+  $('#region').innerHTML=REGIONS.map((r,i)=>`<option value="${i}">${r.name}</option>`).join('');
+  $('#aboutBody').innerHTML=
+    `<p class="hint">Source: ${BUILD.source}<br>Built ${BUILD.date}<br>
+     Each area is ${REGIONS[0].w} × ${REGIONS[0].w} m of 1 m LiDAR composite DTM, British National Grid.<br><br>
+     A cell subdivides when the elevation range inside it, weighted by the drivers above, exceeds a tolerance.
+     The slider maps to that tolerance through a density calibration, so equal slider steps give equal steps in mesh density.<br><br>
+     ${BUILD.note}</p>`;
+  UI.fillMode='ramp'; UI.brushMode='off';
+  readUI();
+  loadRegion(0);
+})();
+</script>
+</body>
+</html>
